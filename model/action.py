@@ -70,6 +70,6 @@ def action_diagnosis(a, s, eps=1e-8):
 
 
 def random_element(k, scale=1.0, seed=None):
-    """A random element of gl(k); used by the tests and by probes/coverage.py."""
+    """A random element of gl(k)."""
     g = torch.Generator().manual_seed(seed) if seed is not None else None
     return scale * torch.randn(k, k, generator=g)

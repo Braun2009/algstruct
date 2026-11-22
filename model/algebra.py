@@ -1,6 +1,6 @@
 """Algebraic structure stream in a language-model-shaped backbone.
 
-Follows `docs/v5/MODEL_MAP.md` exactly; when code and that page disagree, the
+Follows `docs/MODEL_MAP.md` exactly; when code and that page disagree, the
 page wins.
 
 Per layer that carries the structural stream, and per token:
@@ -18,12 +18,12 @@ added to).
 
 Analytic potential gradient (checked against autograd to 3.6e-15):
 
-    V(a)  = v1 Tr a + v2 Tr a^2 + v3 ||a||^2 + v4 ||[a, a^T]||^2
-    grad  = v1 I + 2 v2 a^T + 2 v3 a + 4 v4 [C, a],   C = a a^T - a^T a
+    V(a)  = v2 Tr a^2 + v3 ||a||^2 + v4 ||[a, a^T]||^2
+    grad  = 2 v2 a^T + 2 v3 a + 4 v4 [C, a],   C = a a^T - a^T a
 
 Arms
     full       as above
-    nocompose  A = I (Z stays the identity): composition removed
+    nocompose  Z = A: per-token transform kept, accumulation removed
     nodrive    d_t = 0: the semantic stream cannot reach the law
     off        no structural stream (plain transformer baseline)
 """
@@ -98,7 +98,7 @@ class AlgebraState(nn.Module):
                 + v[2] * c.square().sum((-1, -2)))
 
     def grad_potential(self, a: Tensor, v: Tensor) -> Tensor:
-        """Analytic; verified against autograd in tests_v5/test_algebra_model.py."""
+        """Analytic; agrees with autograd to 3.6e-15."""
         c = a @ a.mT - a.mT @ a
         comm = c @ a - a @ c
         return 2 * v[0] * a.mT + 2 * v[1] * a + 4 * v[2] * comm
@@ -192,10 +192,10 @@ class AlgebraState(nn.Module):
             da = da / (1. + da.norm(dim=(-2, -1), keepdim=True) / self.cfg.step_limit)
             a = a + self.cfg.dt * da
             # Gauge fixing. a -> a + cI leaves A unchanged (sym and lmax shift
-            # together and skew is untouched), while grad V contains the pure
-            # identity term v1 I, so the raw flow drifts a along I without bound
-            # and matrix_exp overflows in fp32. Projecting a to traceless each
-            # step removes the drift and changes nothing about the transform.
+            # together and skew is untouched), but the drive W_d h is not
+            # traceless, so a drifts along I without bound and matrix_exp
+            # overflows in fp32. Projecting a to traceless each step removes the
+            # drift and changes nothing about the transform.
             tr = a.diagonal(dim1=-2, dim2=-1).sum(-1) / self.k
             a = a - tr[..., None, None] * torch.eye(self.k, dtype=a.dtype,
                                                    device=a.device)
