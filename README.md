@@ -23,7 +23,7 @@ $A$ 的谱范数不超过 1：$\mathrm{Cayley}$ 精确正交，指数部分谱�
 
 7 个共享系数决定 $a$ 怎么演化：
 
-$$V(a)=v_2\operatorname{Tr}a^2+v_3\lVert a\rVert^2+v_4\lVert[a,a^\top]\rVert^2,\qquad
+$$V(a)=v_2\mathrm{Tr}a^2+v_3\lVert a\rVert^2+v_4\lVert[a,a^\top]\rVert^2,\qquad
 D=d_0+d_1\lVert a\rVert^2,\qquad \Omega=\omega_0+\omega_1\lVert a\rVert^2$$
 
 $D$ 和 $\Omega$ 是场，随状态变，所以一个固定的系数集能同时包含耗散区和注能区，模式

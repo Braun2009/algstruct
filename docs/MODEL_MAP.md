@@ -43,7 +43,7 @@ $$D(a)=d_0+d_1\lVert a\rVert^2,\qquad \Omega(a)=\omega_0+\omega_1\lVert a\rVert^
 为什么换掉 $\det a$：$k=3$ 时 $\det a$ 是三次，$V$ 沿 $a=tI$ 无下界（$-t^3$），
 松弛没有极小点。故只用偶次不变量。
 
-为什么没有 $v_1\operatorname{Tr}a$ 这一项：$a$ 每步被投影到无迹，$\operatorname{Tr}a\equiv0$，
+为什么没有 $v_1\mathrm{Tr}a$ 这一项：$a$ 每步被投影到无迹，$\mathrm{Tr}a\equiv0$，
 这一项的梯度恒为零，是个死参数。系数因此是 7 个，不是 8 个。
 
 解析梯度（已验证与 autograd 差 $3.6\times10^{-15}$）：
@@ -66,7 +66,7 @@ $P$ 可以退化到秩亏 ⇒ 部分逆失效，但范数不爆。
 | 方向 | 载体 | 性质 | 判据 |
 |---|---|---|---|
 | 语义 → 结构 | $d_t=W_dh_t$ 加进 $\dot a$ | 改定律（源），不改状态 | 切断 $W_d$ ⇒ $a_t$ 常值、$Z$ 退化成 $A^t$ |
-| 结构 → 语义 | $h\mathrel{+}=W_o\mathrm{vec}(Z_t)$ | $\rho$ 左乘后再读出 | $\rho(AB)=\rho(A)\rho(B)$；结构不经过 softmax |
+| 结构 → 语义 | $h\leftarrow h+W_o\mathrm{vec}(Z_t)$ | $\rho$ 左乘后再读出 | $\rho(AB)=\rho(A)\rho(B)$；结构不经过 softmax |
 
 不往 $Z$ 里注入。内容只经 $d_t\to a_t\to A_t$ 影响 $Z$。
 

@@ -58,7 +58,7 @@ $s\mapsto\rho(a)s$。它满足 $\rho(ab)=\rho(a)\rho(b)$，这是保结构的作
 结构对语义的作用，和语义对结构的驱动，是两条通道，都必须是数据定的：
 
 - 语义进结构：$d_t=W_dh_t$ 加进 $\dot a$。它改的是定律，不是状态。
-- 结构出语义：$h_t\mathrel{+}=W_o\operatorname{vec}(Z_t)$。
+- 结构出语义：$h_t\leftarrow h_t+W_o\mathrm{vec}(Z_t)$。
 
 没有「把内容加进 $Z$」这条路。内容只能通过改变定律影响 $Z$；直接加到 $Z$ 上，结构
 就退化成缓存，而不是算子。
