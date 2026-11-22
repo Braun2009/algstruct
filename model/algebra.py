@@ -68,9 +68,12 @@ class AlgebraState(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.k = cfg.k
-        # 8 shared generator coefficients. v2, v3, v4 must be >= 0 so that V is
+        # 7 shared generator coefficients: 3 for V, 2 for D, 2 for Omega.
+        # v2, v3, v4 are softplus-constrained to stay positive so that V is
         # coercive (a cubic invariant such as det a would be unbounded below).
-        self.raw_v = nn.Parameter(torch.tensor([0., .5, .5, .5]))   # v1, v2, v3, v4
+        # Tr a is deliberately absent: a is projected to traceless every step, so
+        # that term would be a constant with zero gradient -- a dead parameter.
+        self.raw_v = nn.Parameter(torch.tensor([.5, .5, .5]))       # v2, v3, v4
         self.d = nn.Parameter(torch.tensor([1., 0.]))               # d0, d1
         self.omega = nn.Parameter(torch.tensor([0., 0.]))           # w0, w1
         # small random, not zero: with a zero drive every token would get the
@@ -83,24 +86,22 @@ class AlgebraState(nn.Module):
 
     # ── the generator ──────────────────────────────────────────────
     def coeffs(self):
-        v = torch.stack((self.raw_v[0], F.softplus(self.raw_v[1]),
-                         F.softplus(self.raw_v[2]), F.softplus(self.raw_v[3])))
+        v = torch.stack((F.softplus(self.raw_v[0]), F.softplus(self.raw_v[1]),
+                         F.softplus(self.raw_v[2])))
         return v, self.d[0], self.d[1], self.omega[0], self.omega[1]
 
     def potential(self, a: Tensor, v: Tensor) -> Tensor:
         a2 = a @ a
         c = a @ a.mT - a.mT @ a
-        return (v[0] * a.diagonal(dim1=-2, dim2=-1).sum(-1)
-                + v[1] * a2.diagonal(dim1=-2, dim2=-1).sum(-1)
-                + v[2] * a.square().sum((-1, -2))
-                + v[3] * c.square().sum((-1, -2)))
+        return (v[0] * a2.diagonal(dim1=-2, dim2=-1).sum(-1)
+                + v[1] * a.square().sum((-1, -2))
+                + v[2] * c.square().sum((-1, -2)))
 
     def grad_potential(self, a: Tensor, v: Tensor) -> Tensor:
         """Analytic; verified against autograd in tests_v5/test_algebra_model.py."""
         c = a @ a.mT - a.mT @ a
         comm = c @ a - a @ c
-        eye = torch.eye(self.k, dtype=a.dtype, device=a.device)
-        return (v[0] * eye + 2 * v[1] * a.mT + 2 * v[2] * a + 4 * v[3] * comm)
+        return 2 * v[0] * a.mT + 2 * v[1] * a + 4 * v[2] * comm
 
     def flow(self, a: Tensor, drive: Tensor) -> Tensor:
         v, d0, d1, w0, w1 = self.coeffs()
@@ -114,28 +115,33 @@ class AlgebraState(nn.Module):
     def decompose(self, a: Tensor):
         """A = R P with ||R||=1 and ||P||<=1, exactly.
 
-        P = exp(sym - shift I) with shift = ||sym||_F.  Since the spectral norm
-        of a symmetric matrix is at most its Frobenius norm, shift >= lmax and
-        every eigenvalue of P lies in (0, 1].
+        P = exp(sym - lmax I), so the spectrum of P lies in (0, 1] with the
+        top eigenvalue exactly 1. The shift must be lmax itself, not an upper
+        bound on it: with shift = ||sym||_F an isotropic contraction (sym = cI,
+        c < 0) gives P = exp(-3|c| I), and 256 compositions drive Z to exactly
+        zero, which silently disconnects the readout. Measured on the first full
+        run: z_last = 0.0 at 256 tokens.
 
-        Why not use lmax itself: eigh fails on degenerate spectra and its
-        backward pass returns NaN when eigenvalues repeat -- and a repeated
-        spectrum is exactly the case sym -> 0, i.e. the start of training.
-        The cost of the Frobenius shift is a conservative over-contraction when
-        the spectrum is isotropic; it vanishes as sym -> 0, so a direction the
-        model wants to preserve is preserved by driving sym there.
+        lmax is computed in float64 from a detached copy and the result is
+        detached: the shift is a normaliser, and eigh's backward pass returns
+        NaN when eigenvalues repeat (exactly the case sym -> 0 at init). If eigh
+        fails, fall back to the Frobenius bound, which is conservative but safe.
         """
         skew = .5 * (a - a.mT)
         sym = .5 * (a + a.mT)
         # Cayley is singular where I - skew/2 degenerates. Rescaling the
-        # generator is harmless: the stream composes over time, so a large
-        # per-step rotation can be reached in several steps.
+        # generator is harmless: the stream composes over time.
         norm = skew.square().sum((-1, -2), keepdim=True).sqrt()
         skew = skew * (norm.clamp(max=self.cfg.skew_limit) / norm.clamp(min=1e-12))
         r = cayley(skew)
-        shift = sym.square().sum((-1, -2), keepdim=True).sqrt()
         eye = torch.eye(self.k, dtype=a.dtype, device=a.device)
-        p = torch.matrix_exp(sym - shift * eye)
+        with torch.no_grad():
+            s64 = sym.detach().double()
+            try:
+                shift = torch.linalg.eigvalsh(s64)[..., -1:].unsqueeze(-1)
+            except Exception:
+                shift = s64.square().sum((-1, -2), keepdim=True).sqrt()
+        p = torch.matrix_exp(sym - shift.to(sym.dtype) * eye)
         return r, p
 
     # ── the stream ─────────────────────────────────────────────────
@@ -153,7 +159,7 @@ class AlgebraState(nn.Module):
         while step < t:
             shifted = eye.expand(b, t, k, k).clone()
             shifted[:, step:] = out[:, :-step]
-            out = shifted @ out
+            out = out @ shifted
             step *= 2
         return out
 
@@ -174,17 +180,36 @@ class AlgebraState(nn.Module):
         # Only the cheap elementwise part is sequential. matrix_exp and the
         # Cayley solve are done once, batched over all positions, because a_t
         # itself does not depend on Z.
+        # W_d has no recurrence: apply it to the whole sequence in one GEMM
+        # instead of one small GEMM per position
+        if self.cfg.arm == 'nodrive':
+            drives = torch.zeros(b, t, self.k, self.k, dtype=h.dtype, device=h.device)
+        else:
+            drives = self.to_drive(h).reshape(b, t, self.k, self.k)
         for i in range(t):
-            drive = (torch.zeros_like(a) if self.cfg.arm == 'nodrive'
-                     else self.to_drive(h[:, i]).reshape(b, self.k, self.k))
+            drive = drives[:, i]
             da = self.flow(a, drive)
             da = da / (1. + da.norm(dim=(-2, -1), keepdim=True) / self.cfg.step_limit)
             a = a + self.cfg.dt * da
+            # Gauge fixing. a -> a + cI leaves A unchanged (sym and lmax shift
+            # together and skew is untouched), while grad V contains the pure
+            # identity term v1 I, so the raw flow drifts a along I without bound
+            # and matrix_exp overflows in fp32. Projecting a to traceless each
+            # step removes the drift and changes nothing about the transform.
+            tr = a.diagonal(dim1=-2, dim2=-1).sum(-1) / self.k
+            a = a - tr[..., None, None] * torch.eye(self.k, dtype=a.dtype,
+                                                   device=a.device)
             a_traj.append(a)
         a_seq = torch.stack(a_traj, 1)                       # (b,t,k,k)
         r, p = self.decompose(a_seq)
-        mats = (r @ p) if self.cfg.arm != 'nocompose' else eye[:, None].expand_as(a_seq)
-        z = self._prefix_product(mats) @ eye[:, None]        # (b,t,k,k)
+        mats = r @ p
+        if self.cfg.arm == 'nocompose':
+            # no accumulation, but the per-token transform is kept: this isolates
+            # "composition along time" from "a transform exists". Replacing A by I
+            # instead would make the readout a constant and test nothing.
+            z = mats
+        else:
+            z = self._prefix_product(mats) @ eye[:, None]    # (b,t,k,k)
         if stats is not None:
             stats['a_var'] = float(a_seq.detach().var(dim=1).mean())
             zf = torch.linalg.matrix_norm(z.detach(), dim=(-2, -1))

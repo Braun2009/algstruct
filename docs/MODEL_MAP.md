@@ -28,26 +28,29 @@ events (b,t,4) ──► 4×Embedding 相加 ──► h (b,t,w)
 
 三问落点：**编码** = 第 2–3 行；**计算** = 第 5 行；**耦合** = 第 1 行（语义→结构）与第 6 行（结构→语义）。
 
-## 1. 编码：$a\in\mathfrak{gl}(k)$ 与 8 个系数
+## 1. 编码：$a\in\mathfrak{gl}(k)$ 与 7 个系数
 
-$$V(a)=v_1\mathrm{Tr}\,a+v_2\mathrm{Tr}\,a^2+v_3\lVert a\rVert^2+v_4\big\lVert[a,a^\top]\big\rVert^2$$
+$$V(a)=v_2\mathrm{Tr}\,a^2+v_3\lVert a\rVert^2+v_4\big\lVert[a,a^\top]\big\rVert^2$$
 $$D(a)=d_0+d_1\lVert a\rVert^2,\qquad \Omega(a)=\omega_0+\omega_1\lVert a\rVert^2$$
 
 | $\theta$ | 出处 | 作用 |
 |---|---|---|
-| $v_1$ | $\mathrm{Tr}\,a$（线性） | 平移势 |
-| $v_2,v_3\ge0$ | $\mathrm{Tr}\,a^2,\ \lVert a\rVert^2$（二次） | **强制性**：保证 $V$ 有下界 |
+| $v_2,v_3>0$ | $\mathrm{Tr}\,a^2,\ \lVert a\rVert^2$（二次） | **强制性**：保证 $V$ 有下界 |
 | $v_4\ge0$ | $\lVert[a,a^\top]\rVert^2$（四次，$\ge0$） | 非凸性；极小点集合 = 正规矩阵 |
 | $d_0,d_1$ | 耗散场 | $d<0$ 即注能 |
 | $\omega_0,\omega_1$ | 陀螺场 | 斜形，只改方向 |
 
 **为什么把 $\det a$ 换掉**：$k=3$ 时 $\det a$ 是三次，$V$ 沿 $a=tI$ 无下界（$-t^3$），
-松弛没有极小点——这与之前 CS 那条线"$F$ 无下界"是同一个病。故只用**偶次**不变量。
+松弛没有极小点。故只用**偶次**不变量。
+
+**为什么没有 $v_1\operatorname{Tr}a$ 这一项**：$a$ 每步被投影到无迹，$\operatorname{Tr}a\equiv0$，
+这一项的梯度恒为零，是个死参数。系数因此是 7 个，不是 8 个。
 
 解析梯度（已验证与 autograd 差 $3.6\times10^{-15}$）：
 
-$$\nabla_a V=v_1 I+2v_2a^\top+2v_3a+4v_4[C,a],\qquad C=aa^\top-a^\top a$$
-$$\mathrm{softplus}\ \text{用于}\ v_2,v_3,v_4\ \text{保证非负}$$
+$$\nabla_a V=2v_2a^\top+2v_3a+4v_4[C,a],\qquad C=aa^\top-a^\top a$$
+
+$v_2,v_3,v_4$ 用 softplus 保证为正。
 
 ## 2. 计算：连乘为什么有界
 
