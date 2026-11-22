@@ -1,98 +1,54 @@
-# 模型映射（架构 → 张量）
+# 张量与参数参考
 
-这一页先于代码。每个张量的形状、每个参数的数量与出处、每条判据的代码位置。
-若代码与本文不一致，以本文为准并改代码。
+[项目首页](../README.md) · [结构流的设计](DESIGN.md)
 
----
+入口是 [AlgebraModel](../model/algebra.py)。下表中，`B` 为批大小，`T` 为序列长度，`w` 为主干宽度，`k` 为矩阵边长，`V` 为词表大小。
 
-## 0. 数据流
+## 前向接口
 
-```
-events (b,t,4) ──► 4×Embedding 相加 ──► h (b,t,w)
-                                          │
-                    ┌─────────────────────┴────────────────────┐
-                    │  语义侧（交换、可平均）                  │
-                    │  h ← h + LocalBlock(h)     ×L           │
-                    └─────────────────────┬────────────────────┘
-                                          │  在 state_layers 上插入
-                                          ▼
-    d_t = W_d h_t                      (b, k, k)   ← 唯一的语义入口（源项）
-    ȧ_t = -∇V(a_t) - D(a_t)⊙sym(a_t) - Ω(a_t)⊙skew(a_t) + d_t
-    a_t ← a_{t-1} + dt·ȧ_t              (b, k, k)   ← 编码
-    A_t = Cayley(skew a_t) · P(a_t)     (b, k, k)   ← 极分解，‖A‖≤1
-    Z_t = A_t Z_{t-1},   Z_0 = I        (b, k, k)   ← 计算 = 连乘（非交换）
-    h_t ← h_t + W_o · vec(Z_t)          (b, t, w)   ← 读出（ρ 作用后回到残差流）
-                                          │
-                                   head(norm(h)) → logits
-```
+| 量 | 形状 | 说明 |
+| --- | --- | --- |
+| `events` | `(B, T, n_fields)` | 建议使用 `torch.long`，每个字段的索引都在 `[0, V)`；`n_fields` 默认 4。 |
+| `h` | `(B, T, w)` | 各字段独立嵌入后相加，逐层经过语义块。 |
+| `dₜ`、`aₜ`、`Aₜ`、`Zₜ` | 每个位置 `(B, k, k)` | 输入驱动、无迹状态、当前变换及有序乘积；`nocompose` 的读出直接用 `Aₜ`。 |
+| `logits` | `(B, T, V)` | 每个位置经 `LayerNorm` 和输出线性层；未做 softmax。 |
 
-三问落点：编码 = 第 2–3 行；计算 = 第 5 行；耦合 = 第 1 行（语义→结构）与第 6 行（结构→语义）。
+[LocalBlock](../model/block.py) 的注意力头宽为 64，`width` 必须是 64 的倍数。`window` 含当前位置，默认值为 8。模型按编号从 0 开始遍历语义块，在 `state_layers` 指定的位置紧接一个结构层；例如默认的 `(1, 3)` 表示第 2、4 个块之后。每次调用 `forward` 都从头初始化结构状态，不跨调用保存前缀。
 
-## 1. 编码：$a\in\mathfrak{gl}(k)$ 与 7 个系数
+## 一个结构层的参数
 
-$$V(a)=v_2\mathrm{Tr}\,a^2+v_3\lVert a\rVert^2+v_4\big\lVert[a,a^\top]\big\rVert^2$$
-$$D(a)=d_0+d_1\lVert a\rVert^2,\qquad \Omega(a)=\omega_0+\omega_1\lVert a\rVert^2$$
+| 参数 | 存储形状 | `w=192, k=3` 时的数量 |
+| --- | --- | ---: |
+| `raw_v`、`d`、`omega` | `(3,)`、`(2,)`、`(2,)` | 7 |
+| `to_drive.weight`、`to_drive.bias` | `(k², w)`、`(k²,)` | 1,737 |
+| `out.weight` | `(w, k²)`，无偏置 | 1,728 |
+| 合计 | `7 + 2wk² + k²` | 3,472 |
 
-| $\theta$ | 出处 | 作用 |
-|---|---|---|
-| $v_2,v_3>0$ | $\mathrm{Tr}\,a^2,\ \lVert a\rVert^2$（二次） | 强制性：保证 $V$ 有下界 |
-| $v_4\ge0$ | $\lVert[a,a^\top]\rVert^2$（四次，$\ge0$） | 非凸性；极小点集合 = 正规矩阵 |
-| $d_0,d_1$ | 耗散场 | $d<0$ 即注能 |
-| $\omega_0,\omega_1$ | 陀螺场 | 斜形，只改方向 |
+不同结构层各有一套以上参数。`model.generators()` 返回以层编号字符串为键的字典，每项包含 `v`（长度 3）、`d₀`、`d₁`、`ω₀` 和 `ω₁`。`v` 是 `raw_v` 经过 softplus 后的值。
 
-为什么换掉 $\det a$：$k=3$ 时 $\det a$ 是三次，$V$ 沿 $a=tI$ 无下界（$-t^3$），
-松弛没有极小点。故只用偶次不变量。
+## 实现索引
 
-为什么没有 $v_1\mathrm{Tr}a$ 这一项：$a$ 每步被投影到无迹，$\mathrm{Tr}a\equiv0$，
-这一项的梯度恒为零，是个死参数。系数因此是 7 个，不是 8 个。
+以下方法均位于 [model/algebra.py](../model/algebra.py)。
 
-解析梯度（已验证与 autograd 差 $3.6\times10^{-15}$）：
+| 方法 | 输入与输出 | 实现要点 |
+| --- | --- | --- |
+| `AlgebraState.grad_potential` | `a → ∇V` | `∇V = 2v₂ aᵀ + 2v₃ a + 4v₄(Ca − aC)`，其中 `C = aaᵀ − aᵀa`。 |
+| `AlgebraState.flow` | `a, drive → Δa` | 在负梯度上叠加对称、反对称分量及位置驱动；时间步长与无迹投影在调用方应用。 |
+| `AlgebraState.decompose` | `a → R, P` | 返回正交因子和对称收缩因子，调用方按 `R @ P` 合成当前变换。 |
+| `AlgebraState._prefix_product` | `(B, T, k, k) → 同形张量` | 第 t 项存放到该位置为止的左乘积；以倍增步长计算所有前缀。 |
+| `AlgebraState._stream` | `h → h + readout` | `out` 作用于展平的矩阵，其输出宽度为 `w`。 |
 
-$$\nabla_a V=2v_2a^\top+2v_3a+4v_4[C,a],\qquad C=aa^\top-a^\top a$$
+`softplus` 保证势函数的三个系数为正，但这本身不足以保证整个势有下界。例如对反对称的 `a`，有 `tr(a²) = −‖a‖²_F` 且 `C = 0`，二次项的符号取决于 `v₃ − v₂`。设计文档中的谱范数界来自 `R`、`P` 的构造，不需要假设 `V` 有下界。
 
-$v_2,v_3,v_4$ 用 softplus 保证为正。
+## 可选统计量
 
-## 2. 计算：连乘为什么有界
+向 `model(events, stats=stats)` 传入空字典即可收集。代码在每个启用的结构层写入相同的键；启用多层时，最终保留最后一层的数据。`arm='off'` 不写这些键。
 
-$$A=RP,\quad R=\mathrm{Cayley}\big(\tfrac{a-a^\top}{2}\big),\quad P=\exp\Big(\tfrac{a+a^\top}{2}-\lambda_{\max}\big(\tfrac{a+a^\top}{2}\big)I\Big)$$
+| 键 | 计算方式 |
+| --- | --- |
+| `a_var` | 对 `a` 沿时间维取样本方差，再对批和矩阵元素取平均。`T = 1` 时样本方差无定义。 |
+| `z_norm` | `Zₜ` 的 Frobenius 范数，对批和所有位置取平均。 |
+| `z_last` | 末位置 `Z` 的 Frobenius 范数，对批取平均。 |
+| `mat_norm` | 每个样本先取时间上最大的 `Aₜ` 的 Frobenius 范数，再对批取平均。 |
 
-$\lVert R\rVert=1$（精确正交）、$\lVert P\rVert\le1$（谱在 $(0,1]$）⇒ $\lVert A\rVert\le1$ ⇒
-$\lVert Z_T\rVert=\lVert A_T\cdots A_1\rVert\le1$。不需要正则化。
-
-$P$ 可以退化到秩亏 ⇒ 部分逆失效，但范数不爆。
-
-## 3. 耦合：一处进、一处出
-
-| 方向 | 载体 | 性质 | 判据 |
-|---|---|---|---|
-| 语义 → 结构 | $d_t=W_dh_t$ 加进 $\dot a$ | 改定律（源），不改状态 | 切断 $W_d$ ⇒ $a_t$ 常值、$Z$ 退化成 $A^t$ |
-| 结构 → 语义 | $h\leftarrow h+W_o\mathrm{vec}(Z_t)$ | $\rho$ 左乘后再读出 | $\rho(AB)=\rho(A)\rho(B)$；结构不经过 softmax |
-
-不往 $Z$ 里注入。内容只经 $d_t\to a_t\to A_t$ 影响 $Z$。
-
-## 4. 参数表
-
-| 项 | 形状 | 数量（$k=3,w=192$） | 共享范围 |
-|---|---|---|---|
-| $\theta$ | 7 | 7 | 全局（全任务、全 token） |
-| $W_d$ | $w\to k^2$ | 1737 | 每 state layer |
-| $W_o$ | $k^2\to w$ | 1737 | 每 state layer |
-| 语义主干 | — | 其余 | 通常 |
-
-没有每任务参数，因此不触发"未知量 ≤ 观测/4"。
-
-## 5. 判据与代码位置
-
-| 判据 | 含义 | 在哪 |
-|---|---|---|
-| $\lVert A\rVert\le1$ | 连乘有界 | `decompose()` + 训练时记录 `mat_norm` |
-| $\mathrm{Var}_t(a_t)>0$ | 结构流没死（不是单一固定变换） | 训练时记录 `a_var` |
-| $\lVert Z_T\rVert$ 不指数衰减 | 记忆没有塌掉 | 记录 `z_norm` |
-| $\rho$ 同态 | 耦合是表示 | `action.py: rho`（测试不在本仓库） |
-| 覆盖率 | 固定 $\theta$，$a$ 扫过时能出现多少种局部类型 | 待写 `tools/coverage.py` |
-| 任务可分性 | 任务在有效场空间是否分开 | 待写 |
-
-## 6. 排除
-
-模式库、路由器、人手挑分支、$\pi$ 三比特、$\theta$ 逐 token 条件化（留作后备）、
-结构经过 softmax、把结构展开成学出来的基。
+这里的 `mat_norm` 不是谱范数；例如 `k × k` 单位矩阵的谱范数是 1，Frobenius 范数是 `√k`。检查设计中的谱范数界应显式使用 `torch.linalg.matrix_norm(A, ord=2)`。
