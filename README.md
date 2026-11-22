@@ -123,3 +123,13 @@ python -m probes.coverage --grid 5
 python -m train.run --arm full --steps 1600 --device cuda
 python -m unittest discover -s tests -t .
 ```
+
+---
+
+## 许可
+
+[Apache License 2.0](LICENSE) © 2026 Braun2009
+
+可以自由使用、修改、分发，包括商业用途。条件是：保留版权声明与署名、
+标注你做的改动、随附一份许可证副本。许可证含显式专利授权——
+若就本项目提起专利诉讼，你获得的授权（含专利授权）自动终止。
