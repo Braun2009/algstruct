@@ -162,4 +162,8 @@ variants/    五个早期版本，各自带说明：改了什么、被什么数�
 
 不包含预训练权重与任务评测数据。
 
+此项目欢迎 agent 或有兴趣的工程师二次开发。
+
+Buy me a coffee → 给个 star 就好。
+
 许可：[Apache-2.0](LICENSE)。DeepSeek-Flash 参与了架构实现。
