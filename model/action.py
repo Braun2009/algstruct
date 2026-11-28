@@ -1,12 +1,14 @@
 """The action rho: how the structural algebra acts on the semantic vector.
 
-    rho(a) s = a @ s   (s viewed as k x q)
+    rho(a) s = a @ s      (s viewed as k x q)
 
 Left multiplication is the canonical module action: it is a homomorphism,
 rho(ab) = rho(a) rho(b), it is non-commutative, and its inverse exists exactly
 when a is invertible -- a *partial* inverse, which is the point.
 
-E/B is one special case of an action, never an assumption.
+It has no parameters. The form of the action is not learned; what is learned is
+the interface around it (which subspace acts as the operand, and where the
+result goes). E/B is one special case of an action, never an assumption.
 """
 from __future__ import annotations
 
@@ -24,24 +26,38 @@ def closure_norm(a):
     return (c * c).sum((-1, -2))
 
 
-def rho(a, s, arm='linear'):
-    """a (...,k,k), s (...,m) with m = k*q  ->  (...,m). Left multiplication.
+def rho_split(a, s, arm='linear'):
+    """Left multiplication with `s` already split as (..., k, q).
 
-    No parameters: this is the canonical module action. It is a homomorphism,
-    rho(ab) = rho(a) rho(b), which is exactly what makes it a *coupling* rather
-    than an additive force.
+    No parameters: this is the canonical module action, so
+    rho(ab) = rho(a) rho(b) holds exactly, which is what makes it a *coupling*
+    rather than an additive force.
+    """
+    if arm == 'linear':
+        return a @ s
+    if arm == 'commutator':
+        if s.shape[-1] != a.shape[-1]:
+            raise ValueError('commutator action needs q == k')
+        return a @ s - s @ a
+    raise ValueError('invalid action')
+
+
+def rho(a, s, arm='linear', split=False):
+    """Left multiplication: a (...,k,k) acts on s.
+
+    With `split=False` (the default) `s` is a flat semantic vector of width
+    m = k*q and is viewed as k rows; the result is flat again. With
+    `split=True` it is already (..., k, q) -- the internal form, which avoids
+    the ambiguity of a flat width when q == 1.
     """
     k = a.shape[-1]
-    if s.shape[-1] % k:
+    if split:
+        return rho_split(a, s, arm)
+    m = s.shape[-1]
+    if m % k:
         raise ValueError('semantic width must be a multiple of k')
-    q = s.shape[-1] // k
-    sv = s.reshape(*s.shape[:-1], k, q)
-    if arm == 'linear':
-        return (a @ sv).reshape(*s.shape)
-    if arm == 'commutator':
-        return (a @ sv - sv @ a).reshape(*s.shape) if q == k else \
-            (a @ sv - sv.mean(-1, keepdim=True) * 0).reshape(*s.shape)
-    raise ValueError('invalid action')
+    sv = s.reshape(*s.shape[:-1], k, m // k)
+    return rho_split(a, sv, arm).reshape(*s.shape)
 
 
 def action_diagnosis(a, s, eps=1e-8):

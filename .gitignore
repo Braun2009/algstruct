@@ -6,3 +6,8 @@ __pycache__/
 venv/
 .ipynb_checkpoints/
 .DS_Store
+
+# local experiment artefacts
+results/
+*.log
+*.pt
