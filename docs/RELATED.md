@@ -50,10 +50,10 @@ Z_t = (∏_{r ≤ t}a_r) Z_0 + Σ_s(∏_{r>s}a_r)b_s
 本模型没有注入项。内容进入结构的唯一通道是**改写定律**：
 
 ```text
-̇a = -∇ V(a)-D(a) sym(a)-Ω(a) skew(a) + d_t, d_t = W_d h_t
+da/dt = −∇V(a) − D(a) sym(a) − Ω(a) skew(a) + d_t,    d_t = W_d h_t
 ```
 
-`d_t` 进的是 `̇a`，不是 `Z`。于是 `Z` 保持为纯粹的复合：
+`d_t` 进的是 `da/dt`，不是 `Z`。于是 `Z` 保持为纯粹的复合：
 
 ```text
 Z_t = A_t A_{t-1}…A_1, Z_0 = I

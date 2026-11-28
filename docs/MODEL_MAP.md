@@ -72,7 +72,7 @@ h_t   ← h_t + W_o vec(Z_t s)              (B,T,w)
 | `_relax_step` | `a, drive, … → a` | 一步松弛，含信赖域、无迹投影、球面投影 |
 | `AlgebraState.decompose` | `a, τ → R, P` | `R = exp(τ skew)`、`P = exp(τ(sym−λmax I))`；`λmax` 在 float64 算并 detach |
 | `AlgebraState._prefix_product` | `(B,T,k,k) → 同形` | 第 t 项是到该位置为止的左乘积；倍增步长 |
-| `rho` / `rho_split` | `(a, s) → 同形` | 左乘；`rho(ab) = rho(a)rho(b)` 精确 |
+| `rho` / `rho_split` | `(a, s) → 同形` | 左乘；`rho(ab) = rho(a)rho(b)` 按定义精确，float32 实测约 4e-6 |
 | `RoPE` | `(B,heads,T,64) → 同形` | 位置旋转，保范数 |
 
 ## 可选统计量
@@ -85,7 +85,7 @@ h_t   ← h_t + W_o vec(Z_t s)              (B,T,w)
 | `a_rel` | `var_t(a) / mean‖a‖²_F`，尺度无关。注意逐 token 编码下它衡量的是**位置间**差异，不是时间记忆 |
 | `z_ratio` | `‖Z_T‖_F / √k`。`rot` 模式下 ≤1，不随 t 衰减（实测 T=64/256/1024 均为 0.86–0.88） |
 | `z_last` | 末位置 `‖Z‖_F` |
-| `R_norm_last` | 只累积正交因子时的末位置范数，构造上恒为 `√k` |
+| `R_norm_last` | 只累积正交因子时的末位置范数，构造上恒为 `√k`（float 下约 `√k ± 1e-4`） |
 | `tau_mean`、`tau_std` | 固有时间的均值与离散度。`τ → 0` 表示结构流对该 token 完全不推进 |
 
 `z_ratio` 的读法：接近 1 说明几乎没有收缩（近纯群），接近 0 说明乘积被压平。
