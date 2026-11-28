@@ -166,4 +166,4 @@ variants/    五个早期版本，各自带说明：改了什么、被什么数�
 
 Buy me a coffee → 给个 star 就好。
 
-许可：[Apache-2.0](LICENSE)。DeepSeek-Flash 参与了架构实现。
+许可：[Apache-2.0](LICENSE)。DeepSeek-Flash、Opus5-5 参与了架构实现。
